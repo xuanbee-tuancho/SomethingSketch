@@ -1,5 +1,8 @@
 module MyPlugin
   module BoardNamingDialog
+    DEFAULT_NAMES = ['Hông trái', 'Hông phải', 'Đáy', 'Nóc', 'Hậu'].freeze
+    SETTINGS_KEY = 'board_names'
+
     module_function
 
     def show
@@ -31,14 +34,32 @@ module MyPlugin
       @dialog.add_action_callback('apply_name') do |_dialog, name|
         apply_name(name)
       end
+
+      @dialog.add_action_callback('rename_name') do |_dialog, payload|
+        old_name, new_name = payload.to_s.split("\u0000", 2)
+        rename_name(old_name, new_name)
+      end
     end
 
     def add_name(name)
       name = name.to_s.strip
       return if name.empty? || @names&.include?(name)
 
-      @names ||= []
+      load_names unless @names
       @names << name
+      save_names
+      refresh
+    end
+
+    def rename_name(old_name, new_name)
+      new_name = new_name.to_s.strip
+      return if new_name.empty? || @names.include?(new_name)
+
+      index = @names.index(old_name.to_s)
+      return unless index
+
+      @names[index] = new_name
+      save_names
       refresh
     end
 
@@ -66,14 +87,27 @@ module MyPlugin
     end
 
     def refresh
-      @names ||= []
+      load_names unless @names
       @dialog.set_html(html)
+    end
+
+    def load_names
+      stored_names = Sketchup.read_default('MyPlugin', SETTINGS_KEY)
+      @names = if stored_names.to_s.empty?
+                 DEFAULT_NAMES.dup
+               else
+                 stored_names.split("\n").reject(&:empty?)
+               end
+    end
+
+    def save_names
+      Sketchup.write_default('MyPlugin', SETTINGS_KEY, @names.join("\n"))
     end
 
     def html
       names_html = @names.map do |name|
         escaped_name = escape_html(name)
-        "<button class=\"name-button\" data-name=\"#{escaped_name}\" onclick=\"applyName(this.dataset.name)\">#{escaped_name}</button>"
+        "<div class=\"name-row\"><button class=\"name-button\" data-name=\"#{escaped_name}\" onclick=\"applyName(this.dataset.name)\">#{escaped_name}</button><input class=\"rename-input\" value=\"#{escaped_name}\"><button onclick=\"renameName(this)\">Đổi tên</button></div>"
       end.join
 
       <<~HTML
@@ -89,7 +123,9 @@ module MyPlugin
             input { flex: 1; min-width: 0; padding: 9px; font-size: 14px; color: #3D321A; background: #FFFBEA; border: 1px solid #D9BF68; }
             button { cursor: pointer; padding: 9px 12px; font-size: 14px; color: #3D321A; background: #E8C75A; border: 1px solid #C8A83D; }
             .name-list { display: flex; flex-direction: column; gap: 7px; }
-            .name-button { text-align: left; background: #FFF0B3; border: 1px solid #D9BF68; }
+            .name-row { display: flex; gap: 6px; }
+            .name-button { flex: 1; text-align: left; background: #FFF0B3; border: 1px solid #D9BF68; }
+            .rename-input { width: 110px; min-width: 0; color: #3D321A; background: #FFFBEA; border: 1px solid #D9BF68; }
             .name-button:hover { background: #F4D982; }
             .empty { color: #8A743B; font-style: italic; }
           </style>
@@ -115,6 +151,14 @@ module MyPlugin
 
             function applyName(name) {
               sketchup.apply_name(name);
+            }
+
+            function renameName(button) {
+              const row = button.parentElement;
+              const oldName = row.querySelector('.name-button').dataset.name;
+              const newName = row.querySelector('.rename-input').value.trim();
+              if (!newName) return;
+              sketchup.rename_name(oldName + '\\u0000' + newName);
             }
 
             document.getElementById('nameInput').addEventListener('keydown', function(event) {
